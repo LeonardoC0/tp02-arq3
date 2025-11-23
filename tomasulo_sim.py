@@ -732,106 +732,141 @@ DIV R6, R1, R2          # Continua - indice 8
 """)
 
     def setup_ui(self):
-        self.master.grid_rowconfigure(0, weight=1)
-        self.master.grid_columnconfigure(0, weight=1)
-        self.master.grid_columnconfigure(1, weight=1)
 
-        left_frame = ttk.Frame(self.master, padding="10")
-        left_frame.grid(row=0, column=0, sticky="nsew")
-        left_frame.grid_rowconfigure(0, weight=1)
-        left_frame.grid_rowconfigure(1, weight=0)
-        left_frame.grid_rowconfigure(2, weight=0)
-        left_frame.grid_columnconfigure(0, weight=1)
-
-        right_frame = ttk.Frame(self.master, padding="10")
-        right_frame.grid(row=0, column=1, sticky="nsew")
-        right_frame.grid_rowconfigure(0, weight=1)
-        right_frame.grid_rowconfigure(1, weight=1)
-        right_frame.grid_rowconfigure(2, weight=1)
-        right_frame.grid_rowconfigure(3, weight=1)
-        for i in range(4):
-            right_frame.grid_columnconfigure(i, weight=1)
-
-        ttk.Label(left_frame, text="Programa de Instrucoes:").grid(row=0, column=0, sticky="nw", pady=(0, 5))
-        self.program_text = scrolledtext.ScrolledText(left_frame, wrap=tk.WORD, height=15, width=40, state='disabled')
-        self.program_text.grid(row=0, column=0, sticky="nsew", padx=(0, 10), pady=(0, 10))
-
-        control_frame = ttk.Frame(left_frame)
-        control_frame.grid(row=1, column=0, sticky="ew", pady=(10, 5))
-        control_frame.columnconfigure(0, weight=1)
-        control_frame.columnconfigure(1, weight=1)
-        control_frame.columnconfigure(2, weight=1)
-        control_frame.columnconfigure(3, weight=1)
-        control_frame.columnconfigure(4, weight=1) # Coluna extra para o novo botao
-
-        # Botão Ciclo Anterior
-        self.prev_cycle_button = ttk.Button(control_frame, text="Ciclo Anterior", command=self.prev_cycle, state="disabled")
-        self.prev_cycle_button.grid(row=0, column=0, padx=5, pady=5, sticky="ew")
-
-        # Botão Proximo Ciclo
-        self.next_cycle_button = ttk.Button(control_frame, text="Proximo Ciclo", command=self.next_cycle)
-        self.next_cycle_button.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
-
-        self.run_all_button = ttk.Button(control_frame, text="Executar Tudo", command=self.run_all)
-        self.run_all_button.grid(row=0, column=2, padx=5, pady=5, sticky="ew")
-
-        self.reset_button = ttk.Button(control_frame, text="Reiniciar", command=self.reset_simulation)
-        self.reset_button.grid(row=0, column=3, padx=5, pady=5, sticky="ew")
         
-        self.load_program_button = ttk.Button(control_frame, text="Carregar", command=self.load_initial_program)
-        self.load_program_button.grid(row=0, column=4, padx=5, pady=5, sticky="ew")
+        self.master.grid_rowconfigure(0, weight=0) # Controles
+        self.master.grid_rowconfigure(1, weight=0) # ROB
+        self.master.grid_rowconfigure(2, weight=1) # Resto do Conteúdo
+        
+        # Colunas da área principal (Row 2)
+        self.master.grid_columnconfigure(0, weight=3) # Esquerda (Main: RS, Regs, Mem)
+        self.master.grid_columnconfigure(1, weight=1) # Direita (Sidebar: Métricas, Trace)
 
-        metrics_frame = ttk.LabelFrame(left_frame, text="Metricas de Desempenho", padding="10")
-        metrics_frame.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        # =================================================================
+        # 1. LINHA 0: BARRA DE CONTROLE (BOTÕES)
+        # =================================================================
+        control_frame = ttk.Frame(self.master, padding="5", relief="groove")
+        control_frame.grid(row=0, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
+        
+        btn_container = ttk.Frame(control_frame)
+        btn_container.pack(anchor="center")
 
+        self.prev_cycle_button = ttk.Button(btn_container, text="⏪ Ciclo Anterior", command=self.prev_cycle, state="disabled")
+        self.prev_cycle_button.pack(side="left", padx=5)
+
+        self.next_cycle_button = ttk.Button(btn_container, text="Próximo Ciclo ⏩", command=self.next_cycle)
+        self.next_cycle_button.pack(side="left", padx=5)
+
+        self.run_all_button = ttk.Button(btn_container, text="▶ Executar Tudo", command=self.run_all)
+        self.run_all_button.pack(side="left", padx=5)
+
+        self.reset_button = ttk.Button(btn_container, text="🔄 Reiniciar", command=self.reset_simulation)
+        self.reset_button.pack(side="left", padx=5)
+        
+        self.load_program_button = ttk.Button(btn_container, text="📂 Carregar Programa", command=self.load_initial_program)
+        self.load_program_button.pack(side="left", padx=5)
+
+        # =================================================================
+        # 2. LINHA 1: ROB (BUFFER DE REORDENAÇÃO) - PERTO DOS BOTÕES
+        # =================================================================
+        rob_frame = ttk.LabelFrame(self.master, text="Buffer de Reordenação (ROB)", padding="5")
+        rob_frame.grid(row=1, column=0, columnspan=2, sticky="nsew", padx=5, pady=(0, 5))
+        # Altura fixa sugerida ou peso pequeno para não ocupar tudo
+        
+        self.rob_tree = self._create_treeview(rob_frame, 
+            ["ID", "Ocupado", "Instrucao", "Estado", "Reg. Dest.", "Valor", "Tipo", "Previsto", "Real"],
+            {"ID": 30, "Ocupado": 60, "Instrucao": 180, "Estado": 90, "Reg. Dest.": 70, "Valor": 60, "Tipo": 60, "Previsto": 60, "Real": 60}
+        )
+        self.rob_tree.configure(height=8) # Limita a altura visual inicial para não empurrar tudo
+        self.rob_tree.pack(fill="both", expand=True)
+
+        # =================================================================
+        # 3. LINHA 2, COLUNA 1 (DIREITA): SIDEBAR (MÉTRICAS E TRACE)
+        # =================================================================
+        sidebar_frame = ttk.Frame(self.master, padding="0")
+        sidebar_frame.grid(row=2, column=1, sticky="nsew", padx=5, pady=5)
+        sidebar_frame.grid_rowconfigure(1, weight=1) # Trace expande
+        sidebar_frame.grid_columnconfigure(0, weight=1)
+
+        # 3A. Métricas (Topo da Sidebar)
+        metrics_frame = ttk.LabelFrame(sidebar_frame, text="Métricas", padding="5")
+        metrics_frame.grid(row=0, column=0, sticky="ew", pady=(0, 5))
+        
         self.metrics_labels = {}
         metrics_order = ["Total Cycles", "Committed Instructions", "IPC", "Bubble Cycles", "Program Counter (PC)"]
+        
         for i, metric in enumerate(metrics_order):
-            ttk.Label(metrics_frame, text=f"{metric}:").grid(row=i, column=0, sticky="w", padx=5, pady=2)
-            value_label = ttk.Label(metrics_frame, text="0")
-            value_label.grid(row=i, column=1, sticky="w", padx=5, pady=2)
-            self.metrics_labels[metric] = value_label
+            lbl_title = ttk.Label(metrics_frame, text=f"{metric}:", font=('Arial', 9, 'bold'))
+            lbl_title.grid(row=i, column=0, sticky="w", padx=2, pady=1)
+            
+            val_lbl = ttk.Label(metrics_frame, text="0", foreground="blue")
+            val_lbl.grid(row=i, column=1, sticky="e", padx=2, pady=1)
+            self.metrics_labels[metric] = val_lbl
 
-        ttk.Label(right_frame, text="Buffer de Reordenacao (ROB):").grid(row=0, column=0, sticky="nw", pady=(0, 5), columnspan=4)
-        self.rob_tree = self._create_treeview(right_frame, 
-            ["ID", "Ocupado", "Instrucao", "Estado", "Reg. Dest.", "Valor", "Tipo", "Previsto", "Real"],
-            {"ID": 40, "Ocupado": 60, "Instrucao": 150, "Estado": 100, "Reg. Dest.": 80, "Valor": 80, "Tipo": 60, "Previsto": 60, "Real": 60}
-        )
-        self.rob_tree.grid(row=0, column=0, columnspan=4, sticky="nsew", pady=(25, 10))
+        # 3B. Trace de Instruções (Resto da Sidebar)
+        trace_frame = ttk.LabelFrame(sidebar_frame, text="Instruções (Trace)", padding="5")
+        trace_frame.grid(row=1, column=0, sticky="nsew")
+        
+        self.program_text = scrolledtext.ScrolledText(trace_frame, wrap=tk.WORD, width=30, height=20, state='disabled')
+        self.program_text.pack(fill="both", expand=True)
 
-        ttk.Label(right_frame, text="Estacoes de Reserva (RS):").grid(row=1, column=0, sticky="nw", pady=(0, 5), columnspan=4)
-        self.rs_tree = self._create_treeview(right_frame,
+        # =================================================================
+        # 4. LINHA 2, COLUNA 0 (ESQUERDA): RESTANTE (RS, REGS, MEM)
+        # =================================================================
+        main_content_frame = ttk.Frame(self.master, padding="0")
+        main_content_frame.grid(row=2, column=0, sticky="nsew", padx=5, pady=5)
+        main_content_frame.grid_rowconfigure(0, weight=1) # RS
+        main_content_frame.grid_rowconfigure(1, weight=1) # Regs/Mem
+        main_content_frame.grid_columnconfigure(0, weight=1)
+
+        # 4A. Reservation Stations (RS)
+        rs_frame = ttk.LabelFrame(main_content_frame, text="Estações de Reserva (RS)", padding="5")
+        rs_frame.grid(row=0, column=0, sticky="nsew", pady=(0, 5))
+        
+        self.rs_tree = self._create_treeview(rs_frame,
             ["Nome", "Ocupado", "Op", "Vj", "Vk", "Qj", "Qk", "ROB Dest."],
             {"Nome": 60, "Ocupado": 60, "Op": 50, "Vj": 70, "Vk": 70, "Qj": 50, "Qk": 50, "ROB Dest.": 80}
         )
-        self.rs_tree.grid(row=1, column=0, columnspan=4, sticky="nsew", pady=(25, 10))
+        self.rs_tree.pack(fill="both", expand=True)
 
-        ttk.Label(right_frame, text="Arquivo de Registradores:").grid(row=2, column=0, sticky="nw", pady=(0, 5), columnspan=2)
-        self.reg_tree = self._create_treeview(right_frame,
-            ["Registrador", "Valor", "Tag ROB", "Ocupado"],
-            {"Registrador": 80, "Valor": 80, "Tag ROB": 70, "Ocupado": 60}
+        # 4B. Registradores e Memória (Lado a Lado na parte inferior da área principal)
+        data_frame = ttk.Frame(main_content_frame)
+        data_frame.grid(row=1, column=0, sticky="nsew")
+        data_frame.grid_columnconfigure(0, weight=1)
+        data_frame.grid_columnconfigure(1, weight=1)
+        data_frame.grid_rowconfigure(0, weight=1)
+
+        # Registradores
+        reg_frame = ttk.LabelFrame(data_frame, text="Registradores")
+        reg_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 2))
+        self.reg_tree = self._create_treeview(reg_frame,
+            ["Reg", "Val", "Tag", "Busy"],
+            {"Reg": 50, "Val": 60, "Tag": 50, "Busy": 50}
         )
-        self.reg_tree.grid(row=2, column=0, columnspan=2, sticky="nsew", pady=(25, 10), padx=(0, 5))
+        self.reg_tree.pack(fill="both", expand=True)
 
-        ttk.Label(right_frame, text="Memoria:").grid(row=2, column=2, sticky="nw", pady=(0, 5), columnspan=2)
-        self.mem_tree = self._create_treeview(right_frame,
-            ["Endereco", "Valor"],
-            {"Endereco": 80, "Valor": 80}
+        # Memória
+        mem_frame = ttk.LabelFrame(data_frame, text="Memória")
+        mem_frame.grid(row=0, column=1, sticky="nsew", padx=(2, 0))
+        self.mem_tree = self._create_treeview(mem_frame,
+            ["End.", "Valor"],
+            {"End.": 60, "Valor": 60}
         )
-        self.mem_tree.grid(row=2, column=2, columnspan=2, sticky="nsew", pady=(25, 10), padx=(5, 0))
-
-        self.update_gui()
+        self.mem_tree.pack(fill="both", expand=True)
 
     def _create_treeview(self, parent_frame, columns, widths):
+        frame = ttk.Frame(parent_frame)
+        
         tree = ttk.Treeview(parent_frame, columns=columns, show="headings")
         for col in columns:
             tree.heading(col, text=col)
             tree.column(col, width=widths.get(col, 100), anchor="center")
+            
         vsb = ttk.Scrollbar(parent_frame, orient="vertical", command=tree.yview)
         tree.configure(yscrollcommand=vsb.set)
-        tree.grid_configure(sticky="nsew")
-        vsb.grid(row=tree.grid_info()['row'], column=tree.grid_info()['column']+len(columns)-1, 
-                 rowspan=tree.grid_info()['rowspan'], sticky='ns')
+        
+        vsb.pack(side="right", fill="y")
+
         return tree
 
     def load_initial_program(self):
@@ -862,14 +897,13 @@ DIV R6, R1, R2          # Continua - indice 8
         
         self.update_gui()
 
-    # --- NOVO: Função chamada pelo botão "Ciclo Anterior" ---
     def prev_cycle(self):
         if not self.initial_program_loaded:
             return
         
         success = self.simulator.step_back()
         if success:
-            self.running_auto = False # Para execução automática se voltar
+            self.running_auto = False 
             self.update_gui()
         else:
             messagebox.showinfo("Info", "Início da simulação alcançado.")
@@ -913,13 +947,13 @@ DIV R6, R1, R2          # Continua - indice 8
         messagebox.showinfo("Reiniciar", "Simulação reiniciada.")
 
     def update_gui(self):
-        # Habilita ou desabilita o botão "Ciclo Anterior" baseado no histórico
         if hasattr(self, 'prev_cycle_button'):
             if self.simulator.current_cycle > 0 and self.simulator.history:
                 self.prev_cycle_button.config(state="normal")
             else:
                 self.prev_cycle_button.config(state="disabled")
 
+        # Atualiza ROB
         for i in self.rob_tree.get_children():
             self.rob_tree.delete(i)
         for entry in self.simulator.reorder_buffer:
@@ -935,6 +969,7 @@ DIV R6, R1, R2          # Continua - indice 8
                 "T" if entry.actual_taken == PREDICT_TAKEN else ("NT" if entry.actual_taken == PREDICT_NOT_TAKEN else "")
             ))
         
+        # Atualiza RS
         for i in self.rs_tree.get_children():
             self.rs_tree.delete(i)
         for rs in self.simulator.reservation_stations:
@@ -949,6 +984,7 @@ DIV R6, R1, R2          # Continua - indice 8
                 str(rs.destination_rob_id) if rs.destination_rob_id is not None else ""
             ))
 
+        # Atualiza Registradores
         for i in self.reg_tree.get_children():
             self.reg_tree.delete(i)
         sorted_regs = sorted(self.simulator.register_file.values(), key=lambda r: r.name)
@@ -960,16 +996,17 @@ DIV R6, R1, R2          # Continua - indice 8
                 "Sim" if reg.busy else "Não"
             ))
 
+        # Atualiza Memória
         for i in self.mem_tree.get_children():
             self.mem_tree.delete(i)
         accessed_memory = sorted([addr for addr, val in self.simulator.memory.items() if val != 0 or addr in [108, 211, 16, 12]])
         for addr in accessed_memory: 
             self.mem_tree.insert("", "end", values=(f"End. {addr}", self.simulator.memory[addr]))
-        for i in range(5):
-             if i not in accessed_memory:
+        if not accessed_memory:
+             for i in range(5):
                  self.mem_tree.insert("", "end", values=(f"End. {i}", self.simulator.memory[i]))
 
-
+        # Atualiza Métricas
         metrics = self.simulator.get_metrics()
         self.metrics_labels["Total Cycles"].config(text=str(metrics["Total Cycles"]))
         self.metrics_labels["Committed Instructions"].config(text=str(metrics["Committed Instructions"]))
@@ -977,7 +1014,7 @@ DIV R6, R1, R2          # Continua - indice 8
         self.metrics_labels["Bubble Cycles"].config(text=str(metrics["Bubble Cycles"]))
         self.metrics_labels["Program Counter (PC)"].config(text=str(self.simulator.program_counter))
 
-
+        # Highlight na linha atual do código
         self.program_text.config(state='normal')
         for tag in self.program_text.tag_names():
             if tag.startswith("state_") or tag == "highlight":
@@ -989,7 +1026,6 @@ DIV R6, R1, R2          # Continua - indice 8
             self.program_text.tag_config("highlight", background="yellow")
         
         self.program_text.config(state='disabled')
-
 
 if __name__ == "__main__":
     root = tk.Tk()
