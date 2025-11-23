@@ -1,70 +1,130 @@
+import collections
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox
-import collections
-import copy
 import os
+import copy  # Import necessário para salvar o estado
 
-# =================================================================================
-# CONSTANTES E CLASSES DE DADOS
-# =================================================================================
-PREDICT_TAKEN = True
-PREDICT_NOT_TAKEN = False
-#TRACE = "trace_com_desvio.txt"
-TRACE = "trace_sem_desvio.txt"
+# Constantes globais para estados e tipos de branch
+JUMP = "JUMP"
+PREDICT_NOT_TAKEN = "NOT_TAKEN"
+PREDICT_TAKEN = "TAKEN"
 
+# --- Classe Instruction ---
 class Instruction:
-    def __init__(self, opname, source1, source2, destination, immediate, address):
-        self.opname = opname
-        self.source1 = source1
-        self.source2 = source2
-        self.destination = destination
-        self.immediate = immediate
-        self.address = address
+    def __init__(self, op, rs1, rs2=None, rd=None, shamt=None, imn=None):
+        self.opname = op
+        self.destination = rd
+        self.source1 = rs1
+        self.source2 = rs2
+        self.immediate = shamt
+        self.address = imn
         
+        # Atributos de estado do pipeline
+        self.execution_cycles_remaining = self._get_execution_cycles(op)
+        self.ready_to_write = False
         self.issue_cycle = -1
         self.execute_start_cycle = -1
         self.write_result_cycle = -1
         self.commit_cycle = -1
-        
-        # Latências (Ciclos de execução)
-        if opname in ['ADD', 'SUB', 'SLLI', 'SRLI', 'OR', 'AND', 'BEQ', 'BNE']:
-            self.execution_cycles_remaining = 1
-        elif opname in ['LW', 'LB', 'SW', 'SB']:
-            self.execution_cycles_remaining = 2
-        elif opname in ['MUL']:
-            self.execution_cycles_remaining = 4 
-        elif opname in ['DIV']:
-            self.execution_cycles_remaining = 10
-        else:
-            self.execution_cycles_remaining = 1
+        self.state_at_cycle = {}
 
+    def _get_execution_cycles(self, opname):
+        if opname in ['ADD', 'SUB']: return 2
+        elif opname in ['SLLI', 'SRLI', 'OR', 'AND', 'BEQ', 'BNE']: return 1
+        elif opname in ['LW', 'LB', 'SW', 'SB']: return 5
+        elif opname in ['MUL', 'DIV']: return 3
+        else: return 1
+
+    # Reseta os atributos de estado do pipeline para re-execução
+    def reset_pipeline_state(self):
+        self.execution_cycles_remaining = self._get_execution_cycles(self.opname)
         self.ready_to_write = False
-        self.state_at_cycle = {} 
+        self.issue_cycle = -1
+        self.execute_start_cycle = -1
+        self.write_result_cycle = -1
+        self.commit_cycle = -1
+        self.state_at_cycle = {}
 
     def __str__(self):
-        parts = [self.opname]
-        if self.destination: parts.append(f"{self.destination},")
-        if self.source1: parts.append(f"{self.source1}")
-        if self.source2: parts.append(f", {self.source2}")
-        if self.immediate is not None: parts.append(f", {self.immediate}")
-        if self.address is not None: parts.append(f", {self.address}")
-        return " ".join(parts).replace(",,", ",")
+        if self.opname in ['SLLI', 'SRLI']:
+            return f'{self.opname} {self.destination}, {self.source1}, {self.immediate}'
+        elif self.opname in ['LW', 'LB']:
+            return f'{self.opname} {self.destination}, {self.source1}, {self.address}'
+        elif self.opname in ['SW', 'SB']:
+            return f'{self.opname} {self.source2}, {self.source1}, {self.address}'
+        elif self.opname in ['BEQ', 'BNE']:
+            return f'{self.opname} {self.source1}, {self.source2}, {self.address}'
+        elif self.opname in ['MUL', 'DIV', 'ADD', 'SUB', 'OR', 'AND']:
+            return f'{self.opname} {self.destination}, {self.source1}, {self.source2}'
+        else:
+            return f'{self.opname} {self.destination}, {self.source1}, {self.source2}'
 
+
+# --- Classe Register ---
 class Register:
     def __init__(self, name):
         self.name = name
         self.value = 0
+        self.reorder_tag = None
         self.busy = False
-        self.reorder_tag = None 
-    
+
+    def clear(self):
+        self.reorder_tag = None
+        self.busy = False
+
+    def __str__(self):
+        return f'{self.name}: Val={self.value}, ROB={self.reorder_tag}, Busy={self.busy}'
+
+# --- Classe ReorderBufferPos ---
+class ReorderBufferPos:
+    def __init__(self, id, instruction, destination_reg, inst_type):
+        self.id = id
+        self.busy = False
+        self.instruction = instruction
+        self.state = ""
+        self.destination_reg = destination_reg
+        self.value = None
+        
+        self.inst_type = inst_type
+        self.is_branch = (inst_type == "BRANCH")
+        self.predicted_taken = None
+        self.actual_taken = None
+        self.target_address = None
+        self.program_order_index = -1
+        self.source_rs = None
+
     def clear(self):
         self.busy = False
-        self.reorder_tag = None
+        if self.instruction:
+            self.instruction.reset_pipeline_state()
+        self.instruction = None
+        self.state = ""
+        self.destination_reg = ""
+        self.value = None
+        self.inst_type = ""
+        self.is_branch = False
+        self.predicted_taken = None
+        self.actual_taken = None
+        self.target_address = None
+        self.program_order_index = -1
+        self.source_rs = None
 
+    def __str__(self):
+        return (f'#{self.id} Busy:{self.busy} Inst:{self.instruction} State:{self.state} '
+                f'Dest:{self.destination_reg} Val:{self.value} Type:{self.inst_type}')
+
+# --- Classe ReservationStation ---
 class ReservationStation:
     def __init__(self, name):
         self.name = name
-        self.clear()
+        self.busy = False
+        self.op = None
+        self.Vj = None
+        self.Vk = None
+        self.Qj = None
+        self.Qk = None
+        self.destination_rob_id = None
+        self.instruction_obj = None
 
     def clear(self):
         self.busy = False
@@ -79,37 +139,11 @@ class ReservationStation:
     def is_clear(self):
         return not self.busy
 
-class ReorderBufferPos:
-    def __init__(self, id, instruction, destination_reg, value):
-        self.id = id
-        self.instruction = instruction
-        self.destination_reg = destination_reg
-        self.value = value
-        self.busy = False
-        self.state = "Empty" 
-        self.program_order_index = -1
-        self.source_rs = None 
-        self.inst_type = None 
-        self.predicted_taken = None 
-        self.actual_taken = None 
-        self.target_address = None 
+    def __str__(self):
+        return (f'Name:{self.name} Busy:{self.busy} Op:{self.op} Vj:{self.Vj} Vk:{self.Vk} '
+                f'Qj:{self.Qj} Qk:{self.Qk} Dest_ROB:{self.destination_rob_id}')
 
-    def clear(self):
-        self.instruction = None
-        self.destination_reg = None
-        self.value = None
-        self.busy = False
-        self.state = "Empty"
-        self.program_order_index = -1
-        self.source_rs = None
-        self.inst_type = None
-        self.predicted_taken = None
-        self.actual_taken = None
-        self.target_address = None
-
-# =================================================================================
-# SIMULADOR TOMASULO (Lógica)
-# =================================================================================
+# --- Classe TomasuloSimulator ---
 class TomasuloSimulator:
     def __init__(self, num_mem_rs=2, num_add_rs=3, num_logic_rs=2, num_mult_rs=1, rob_size=8):
         self.register_file = {}
@@ -132,6 +166,7 @@ class TomasuloSimulator:
         self.is_running = False
         self.program_instructions = []
         
+        # Pilha para armazenar o histórico de estados (Snapshots)
         self.history = []
 
     def _create_reservation_stations(self, num_mem, num_add, num_logic, num_mult):
@@ -144,12 +179,12 @@ class TomasuloSimulator:
         for i in range(num_mult):
             self.reservation_stations.append(ReservationStation(f"MUL{i+1}")) 
 
-    def load_instructions(self, filename=TRACE):
+    def load_instructions(self, filename="teste.txt"):
         self.program_instructions.clear()
         self.register_file.clear()
         self.memory = collections.defaultdict(int)
         self.program_length = 0
-        self.history.clear()
+        self.history.clear() # Limpa histórico ao carregar novo programa
 
         try:
             with open(filename, 'r') as f:
@@ -167,6 +202,7 @@ class TomasuloSimulator:
                     source2 = None
                     immediate = None
                     address = None
+                    inst_type = "ALU"
 
                     if opname in ['SLLI', 'SRLI']:
                         destination = tokens[1]
@@ -176,18 +212,22 @@ class TomasuloSimulator:
                         destination = tokens[1]
                         source1 = tokens[2]
                         address = int(tokens[3])
+                        inst_type = "LOAD"
                     elif opname in ['SW', 'SB']: 
                         source2 = tokens[1]
                         source1 = tokens[2]
                         address = int(tokens[3])
+                        inst_type = "STORE"
                     elif opname in ['BEQ', 'BNE']: 
                         source1 = tokens[1]
                         source2 = tokens[2]
                         address = int(tokens[3])
+                        inst_type = "BRANCH"
                     elif opname in ['ADD', 'SUB', 'OR', 'AND', 'MUL', 'DIV']:
                         destination = tokens[1]
                         source1 = tokens[2]
                         source2 = tokens[3]
+                        inst_type = "ALU"
                     else:
                         print(f"Warning: Instrução '{opname}' não reconhecida na linha: {line}. Ignorando.")
                         continue
@@ -227,6 +267,7 @@ class TomasuloSimulator:
                     return rs
         return None
 
+    # --- Estágio de Emissão (Issue) ---
     def issue_stage(self):
         issued_this_cycle = False
         if self.program_counter < self.program_length:
@@ -318,6 +359,7 @@ class TomasuloSimulator:
                 issued_this_cycle = True
         return issued_this_cycle
 
+    # --- Estágio de Execução (Execute) ---
     def execute_stage(self):
         units_executing_this_cycle = {
             "ADD": False, "MUL": False, "BRANCH": False, "MEM": False
@@ -459,6 +501,8 @@ class TomasuloSimulator:
                     
                     rob_entry.value = result
 
+
+    # --- Estágio de Escrita de Resultado (Write Result - CDB) ---
     def write_result_stage(self):
         ready_to_write_robs = sorted([
             rob for rob in self.reorder_buffer 
@@ -488,6 +532,7 @@ class TomasuloSimulator:
                 if rob_entry_to_broadcast.source_rs.destination_rob_id == rob_id_to_broadcast:
                     rob_entry_to_broadcast.source_rs.clear()
 
+    # --- Estágio de Confirmação (Commit) ---
     def commit_stage(self):
         committed_this_cycle = False
         head_rob_entry = self.reorder_buffer[self.rob_head]
@@ -577,21 +622,29 @@ class TomasuloSimulator:
         
         return committed_this_cycle
 
+    # --- NOVO: Função para Salvar o Estado Atual ---
     def save_current_state(self):
+        # Cria uma cópia profunda do estado atual do objeto (exceto o histórico)
         current_state = copy.deepcopy(self.__dict__)
         if 'history' in current_state:
-            del current_state['history'] 
+            del current_state['history'] # Não salvamos o histórico dentro do histórico
         self.history.append(current_state)
 
+    # --- NOVO: Função para Voltar um Ciclo ---
     def step_back(self):
         if not self.history:
             return False
         
+        # Recupera o último estado salvo
         previous_state = self.history.pop()
+        
+        # Restaura o dicionário interno do objeto com o estado anterior
         self.__dict__.update(previous_state)
         return True
 
+    # Avanca o simulador em um ciclo de clock
     def clock_tick(self):
+        # Salva o estado ANTES de executar qualquer mudança
         self.save_current_state()
 
         self.current_cycle += 1
@@ -608,11 +661,13 @@ class TomasuloSimulator:
             if entry.busy and entry.instruction:
                 entry.instruction.state_at_cycle[self.current_cycle] = entry.state
 
+    # Verifica se a simulação terminou
     def is_finished(self):
         is_all_issued = (self.program_counter >= self.program_length)
         is_rob_empty = (self.current_rob_entries == 0)
         return is_all_issued and is_rob_empty
 
+    # Calcula e retorna as métricas de desempenho
     def get_metrics(self):
         total_cycles = self.current_cycle
         ipc = self.committed_instructions_count / total_cycles if total_cycles > 0 else 0
@@ -624,6 +679,7 @@ class TomasuloSimulator:
             "Program Counter (PC)": self.program_counter,
         }
 
+    # Reseta o simulador para o estado inicial
     def reset_simulator(self):
         self.register_file = {}
         self.memory = collections.defaultdict(int)
@@ -641,11 +697,9 @@ class TomasuloSimulator:
         self.committed_instructions_count = 0
         self.bubble_cycles = 0
         self.is_running = False
-        self.history.clear() 
+        self.history.clear() # Limpa histórico ao resetar
 
-# =================================================================================
-# INTERFACE GRÁFICA (GUI) - REORGANIZADA
-# =================================================================================
+# --- Classe TomasuloGUI ---
 class TomasuloGUI:
     def __init__(self, master, simulator):
         self.master = master
@@ -678,141 +732,106 @@ DIV R6, R1, R2          # Continua - indice 8
 """)
 
     def setup_ui(self):
+        self.master.grid_rowconfigure(0, weight=1)
+        self.master.grid_columnconfigure(0, weight=1)
+        self.master.grid_columnconfigure(1, weight=1)
 
+        left_frame = ttk.Frame(self.master, padding="10")
+        left_frame.grid(row=0, column=0, sticky="nsew")
+        left_frame.grid_rowconfigure(0, weight=1)
+        left_frame.grid_rowconfigure(1, weight=0)
+        left_frame.grid_rowconfigure(2, weight=0)
+        left_frame.grid_columnconfigure(0, weight=1)
+
+        right_frame = ttk.Frame(self.master, padding="10")
+        right_frame.grid(row=0, column=1, sticky="nsew")
+        right_frame.grid_rowconfigure(0, weight=1)
+        right_frame.grid_rowconfigure(1, weight=1)
+        right_frame.grid_rowconfigure(2, weight=1)
+        right_frame.grid_rowconfigure(3, weight=1)
+        for i in range(4):
+            right_frame.grid_columnconfigure(i, weight=1)
+
+        ttk.Label(left_frame, text="Programa de Instrucoes:").grid(row=0, column=0, sticky="nw", pady=(0, 5))
+        self.program_text = scrolledtext.ScrolledText(left_frame, wrap=tk.WORD, height=15, width=40, state='disabled')
+        self.program_text.grid(row=0, column=0, sticky="nsew", padx=(0, 10), pady=(0, 10))
+
+        control_frame = ttk.Frame(left_frame)
+        control_frame.grid(row=1, column=0, sticky="ew", pady=(10, 5))
+        control_frame.columnconfigure(0, weight=1)
+        control_frame.columnconfigure(1, weight=1)
+        control_frame.columnconfigure(2, weight=1)
+        control_frame.columnconfigure(3, weight=1)
+        control_frame.columnconfigure(4, weight=1) # Coluna extra para o novo botao
+
+        # Botão Ciclo Anterior
+        self.prev_cycle_button = ttk.Button(control_frame, text="Ciclo Anterior", command=self.prev_cycle, state="disabled")
+        self.prev_cycle_button.grid(row=0, column=0, padx=5, pady=5, sticky="ew")
+
+        # Botão Proximo Ciclo
+        self.next_cycle_button = ttk.Button(control_frame, text="Proximo Ciclo", command=self.next_cycle)
+        self.next_cycle_button.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
+
+        self.run_all_button = ttk.Button(control_frame, text="Executar Tudo", command=self.run_all)
+        self.run_all_button.grid(row=0, column=2, padx=5, pady=5, sticky="ew")
+
+        self.reset_button = ttk.Button(control_frame, text="Reiniciar", command=self.reset_simulation)
+        self.reset_button.grid(row=0, column=3, padx=5, pady=5, sticky="ew")
         
-        self.master.grid_rowconfigure(0, weight=0) # Controles
-        self.master.grid_rowconfigure(1, weight=0) # ROB
-        self.master.grid_rowconfigure(2, weight=1) # Resto do Conteúdo
-        
-        # Colunas da área principal (Row 2)
-        self.master.grid_columnconfigure(0, weight=3) # Esquerda (Main: RS, Regs, Mem)
-        self.master.grid_columnconfigure(1, weight=1) # Direita (Sidebar: Métricas, Trace)
+        self.load_program_button = ttk.Button(control_frame, text="Carregar", command=self.load_initial_program)
+        self.load_program_button.grid(row=0, column=4, padx=5, pady=5, sticky="ew")
 
-        # =================================================================
-        # 1. LINHA 0: BARRA DE CONTROLE (BOTÕES)
-        # =================================================================
-        control_frame = ttk.Frame(self.master, padding="5", relief="groove")
-        control_frame.grid(row=0, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
-        
-        btn_container = ttk.Frame(control_frame)
-        btn_container.pack(anchor="center")
+        metrics_frame = ttk.LabelFrame(left_frame, text="Metricas de Desempenho", padding="10")
+        metrics_frame.grid(row=2, column=0, sticky="ew", pady=(10, 0))
 
-        self.prev_cycle_button = ttk.Button(btn_container, text="⏪ Ciclo Anterior", command=self.prev_cycle, state="disabled")
-        self.prev_cycle_button.pack(side="left", padx=5)
-
-        self.next_cycle_button = ttk.Button(btn_container, text="Próximo Ciclo ⏩", command=self.next_cycle)
-        self.next_cycle_button.pack(side="left", padx=5)
-
-        self.run_all_button = ttk.Button(btn_container, text="▶ Executar Tudo", command=self.run_all)
-        self.run_all_button.pack(side="left", padx=5)
-
-        self.reset_button = ttk.Button(btn_container, text="🔄 Reiniciar", command=self.reset_simulation)
-        self.reset_button.pack(side="left", padx=5)
-        
-        self.load_program_button = ttk.Button(btn_container, text="📂 Carregar Programa", command=self.load_initial_program)
-        self.load_program_button.pack(side="left", padx=5)
-
-        # =================================================================
-        # 2. LINHA 1: ROB (BUFFER DE REORDENAÇÃO) - PERTO DOS BOTÕES
-        # =================================================================
-        rob_frame = ttk.LabelFrame(self.master, text="Buffer de Reordenação (ROB)", padding="9")
-        rob_frame.grid(row=1, column=0, columnspan=2, sticky="nsew", padx=5, pady=(0, 9))
-        # Altura fixa sugerida ou peso pequeno para não ocupar tudo
-        
-        self.rob_tree = self._create_treeview(rob_frame, 
-            ["ID", "Ocupado", "Instrucao", "Estado", "Reg. Dest.", "Valor", "Tipo", "Previsto", "Real"],
-            {"ID": 30, "Ocupado": 60, "Instrucao": 180, "Estado": 90, "Reg. Dest.": 70, "Valor": 60, "Tipo": 60, "Previsto": 60, "Real": 60}
-        )
-        self.rob_tree.configure(height=8) # Limita a altura visual inicial para não empurrar tudo
-        self.rob_tree.pack(fill="both", expand=True)
-
-        # =================================================================
-        # 3. LINHA 2, COLUNA 1 (DIREITA): SIDEBAR (MÉTRICAS E TRACE)
-        # =================================================================
-        sidebar_frame = ttk.Frame(self.master, padding="0")
-        sidebar_frame.grid(row=2, column=1, sticky="nsew", padx=5, pady=5)
-        sidebar_frame.grid_rowconfigure(1, weight=1) # Trace expande
-        sidebar_frame.grid_columnconfigure(0, weight=1)
-
-        # 3A. Métricas (Topo da Sidebar)
-        metrics_frame = ttk.LabelFrame(sidebar_frame, text="Métricas", padding="5")
-        metrics_frame.grid(row=0, column=0, sticky="ew", pady=(0, 5))
-        
         self.metrics_labels = {}
         metrics_order = ["Total Cycles", "Committed Instructions", "IPC", "Bubble Cycles", "Program Counter (PC)"]
-        
         for i, metric in enumerate(metrics_order):
-            lbl_title = ttk.Label(metrics_frame, text=f"{metric}:", font=('Arial', 9, 'bold'))
-            lbl_title.grid(row=i, column=0, sticky="w", padx=2, pady=1)
-            
-            val_lbl = ttk.Label(metrics_frame, text="0", foreground="blue")
-            val_lbl.grid(row=i, column=1, sticky="e", padx=2, pady=1)
-            self.metrics_labels[metric] = val_lbl
+            ttk.Label(metrics_frame, text=f"{metric}:").grid(row=i, column=0, sticky="w", padx=5, pady=2)
+            value_label = ttk.Label(metrics_frame, text="0")
+            value_label.grid(row=i, column=1, sticky="w", padx=5, pady=2)
+            self.metrics_labels[metric] = value_label
 
-        # 3B. Trace de Instruções (Resto da Sidebar)
-        trace_frame = ttk.LabelFrame(sidebar_frame, text="Instruções (Trace)", padding="5")
-        trace_frame.grid(row=1, column=0, sticky="nsew")
-        
-        self.program_text = scrolledtext.ScrolledText(trace_frame, wrap=tk.WORD, width=30, height=20, state='disabled')
-        self.program_text.pack(fill="both", expand=True)
+        ttk.Label(right_frame, text="Buffer de Reordenacao (ROB):").grid(row=0, column=0, sticky="nw", pady=(0, 5), columnspan=4)
+        self.rob_tree = self._create_treeview(right_frame, 
+            ["ID", "Ocupado", "Instrucao", "Estado", "Reg. Dest.", "Valor", "Tipo", "Previsto", "Real"],
+            {"ID": 40, "Ocupado": 60, "Instrucao": 150, "Estado": 100, "Reg. Dest.": 80, "Valor": 80, "Tipo": 60, "Previsto": 60, "Real": 60}
+        )
+        self.rob_tree.grid(row=0, column=0, columnspan=4, sticky="nsew", pady=(25, 10))
 
-        # =================================================================
-        # 4. LINHA 2, COLUNA 0 (ESQUERDA): RESTANTE (RS, REGS, MEM)
-        # =================================================================
-        main_content_frame = ttk.Frame(self.master, padding="0")
-        main_content_frame.grid(row=2, column=0, sticky="nsew", padx=5, pady=5)
-        main_content_frame.grid_rowconfigure(0, weight=1) # RS
-        main_content_frame.grid_rowconfigure(1, weight=1) # Regs/Mem
-        main_content_frame.grid_columnconfigure(0, weight=1)
-
-        # 4A. Reservation Stations (RS)
-        rs_frame = ttk.LabelFrame(main_content_frame, text="Estações de Reserva (RS)", padding="5")
-        rs_frame.grid(row=0, column=0, sticky="nsew", pady=(0, 5))
-        
-        self.rs_tree = self._create_treeview(rs_frame,
+        ttk.Label(right_frame, text="Estacoes de Reserva (RS):").grid(row=1, column=0, sticky="nw", pady=(0, 5), columnspan=4)
+        self.rs_tree = self._create_treeview(right_frame,
             ["Nome", "Ocupado", "Op", "Vj", "Vk", "Qj", "Qk", "ROB Dest."],
             {"Nome": 60, "Ocupado": 60, "Op": 50, "Vj": 70, "Vk": 70, "Qj": 50, "Qk": 50, "ROB Dest.": 80}
         )
-        self.rs_tree.pack(fill="both", expand=True)
+        self.rs_tree.grid(row=1, column=0, columnspan=4, sticky="nsew", pady=(25, 10))
 
-        # 4B. Registradores e Memória (Lado a Lado na parte inferior da área principal)
-        data_frame = ttk.Frame(main_content_frame)
-        data_frame.grid(row=1, column=0, sticky="nsew")
-        data_frame.grid_columnconfigure(0, weight=1)
-        data_frame.grid_columnconfigure(1, weight=1)
-        data_frame.grid_rowconfigure(0, weight=1)
-
-        # Registradores
-        reg_frame = ttk.LabelFrame(data_frame, text="Registradores")
-        reg_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 2))
-        self.reg_tree = self._create_treeview(reg_frame,
-            ["Reg", "Val", "Tag", "Busy"],
-            {"Reg": 50, "Val": 60, "Tag": 50, "Busy": 50}
+        ttk.Label(right_frame, text="Arquivo de Registradores:").grid(row=2, column=0, sticky="nw", pady=(0, 5), columnspan=2)
+        self.reg_tree = self._create_treeview(right_frame,
+            ["Registrador", "Valor", "Tag ROB", "Ocupado"],
+            {"Registrador": 80, "Valor": 80, "Tag ROB": 70, "Ocupado": 60}
         )
-        self.reg_tree.pack(fill="both", expand=True)
+        self.reg_tree.grid(row=2, column=0, columnspan=2, sticky="nsew", pady=(25, 10), padx=(0, 5))
 
-        # Memória
-        mem_frame = ttk.LabelFrame(data_frame, text="Memória")
-        mem_frame.grid(row=0, column=1, sticky="nsew", padx=(2, 0))
-        self.mem_tree = self._create_treeview(mem_frame,
-            ["End.", "Valor"],
-            {"End.": 60, "Valor": 60}
+        ttk.Label(right_frame, text="Memoria:").grid(row=2, column=2, sticky="nw", pady=(0, 5), columnspan=2)
+        self.mem_tree = self._create_treeview(right_frame,
+            ["Endereco", "Valor"],
+            {"Endereco": 80, "Valor": 80}
         )
-        self.mem_tree.pack(fill="both", expand=True)
+        self.mem_tree.grid(row=2, column=2, columnspan=2, sticky="nsew", pady=(25, 10), padx=(5, 0))
+
+        self.update_gui()
 
     def _create_treeview(self, parent_frame, columns, widths):
-        frame = ttk.Frame(parent_frame)
-        
         tree = ttk.Treeview(parent_frame, columns=columns, show="headings")
         for col in columns:
             tree.heading(col, text=col)
             tree.column(col, width=widths.get(col, 100), anchor="center")
-            
         vsb = ttk.Scrollbar(parent_frame, orient="vertical", command=tree.yview)
         tree.configure(yscrollcommand=vsb.set)
-        
-        vsb.pack(side="right", fill="y")
-
+        tree.grid_configure(sticky="nsew")
+        vsb.grid(row=tree.grid_info()['row'], column=tree.grid_info()['column']+len(columns)-1, 
+                 rowspan=tree.grid_info()['rowspan'], sticky='ns')
         return tree
 
     def load_initial_program(self):
@@ -843,13 +862,14 @@ DIV R6, R1, R2          # Continua - indice 8
         
         self.update_gui()
 
+    # --- NOVO: Função chamada pelo botão "Ciclo Anterior" ---
     def prev_cycle(self):
         if not self.initial_program_loaded:
             return
         
         success = self.simulator.step_back()
         if success:
-            self.running_auto = False 
+            self.running_auto = False # Para execução automática se voltar
             self.update_gui()
         else:
             messagebox.showinfo("Info", "Início da simulação alcançado.")
@@ -893,13 +913,13 @@ DIV R6, R1, R2          # Continua - indice 8
         messagebox.showinfo("Reiniciar", "Simulação reiniciada.")
 
     def update_gui(self):
+        # Habilita ou desabilita o botão "Ciclo Anterior" baseado no histórico
         if hasattr(self, 'prev_cycle_button'):
             if self.simulator.current_cycle > 0 and self.simulator.history:
                 self.prev_cycle_button.config(state="normal")
             else:
                 self.prev_cycle_button.config(state="disabled")
 
-        # Atualiza ROB
         for i in self.rob_tree.get_children():
             self.rob_tree.delete(i)
         for entry in self.simulator.reorder_buffer:
@@ -915,7 +935,6 @@ DIV R6, R1, R2          # Continua - indice 8
                 "T" if entry.actual_taken == PREDICT_TAKEN else ("NT" if entry.actual_taken == PREDICT_NOT_TAKEN else "")
             ))
         
-        # Atualiza RS
         for i in self.rs_tree.get_children():
             self.rs_tree.delete(i)
         for rs in self.simulator.reservation_stations:
@@ -930,7 +949,6 @@ DIV R6, R1, R2          # Continua - indice 8
                 str(rs.destination_rob_id) if rs.destination_rob_id is not None else ""
             ))
 
-        # Atualiza Registradores
         for i in self.reg_tree.get_children():
             self.reg_tree.delete(i)
         sorted_regs = sorted(self.simulator.register_file.values(), key=lambda r: r.name)
@@ -942,17 +960,16 @@ DIV R6, R1, R2          # Continua - indice 8
                 "Sim" if reg.busy else "Não"
             ))
 
-        # Atualiza Memória
         for i in self.mem_tree.get_children():
             self.mem_tree.delete(i)
         accessed_memory = sorted([addr for addr, val in self.simulator.memory.items() if val != 0 or addr in [108, 211, 16, 12]])
         for addr in accessed_memory: 
             self.mem_tree.insert("", "end", values=(f"End. {addr}", self.simulator.memory[addr]))
-        if not accessed_memory:
-             for i in range(5):
+        for i in range(5):
+             if i not in accessed_memory:
                  self.mem_tree.insert("", "end", values=(f"End. {i}", self.simulator.memory[i]))
 
-        # Atualiza Métricas
+
         metrics = self.simulator.get_metrics()
         self.metrics_labels["Total Cycles"].config(text=str(metrics["Total Cycles"]))
         self.metrics_labels["Committed Instructions"].config(text=str(metrics["Committed Instructions"]))
@@ -960,7 +977,7 @@ DIV R6, R1, R2          # Continua - indice 8
         self.metrics_labels["Bubble Cycles"].config(text=str(metrics["Bubble Cycles"]))
         self.metrics_labels["Program Counter (PC)"].config(text=str(self.simulator.program_counter))
 
-        # Highlight na linha atual do código
+
         self.program_text.config(state='normal')
         for tag in self.program_text.tag_names():
             if tag.startswith("state_") or tag == "highlight":
@@ -973,12 +990,9 @@ DIV R6, R1, R2          # Continua - indice 8
         
         self.program_text.config(state='disabled')
 
+
 if __name__ == "__main__":
     root = tk.Tk()
-    # Aumentei um pouco o tamanho padrão para acomodar o ROB no topo
-    root.geometry("1100x700") 
-    
-    sim = TomasuloSimulator()
-    app = TomasuloGUI(root, sim)
-    
+    simulator_instance = TomasuloSimulator()
+    gui = TomasuloGUI(root, simulator_instance)
     root.mainloop()
