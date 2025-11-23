@@ -1,0 +1,27 @@
+# --- Teste: DESVIO TOMADO (com Misprediction) ---
+ADD R3, R1, R2          # R3 = 5 + 10 = 15      
+SUB R4, R2, R1          # R4 = 10 - 5 = 5      
+SW R3, R10, 4           # Mem[104] = R3(15)    
+SUB R5, R3, R3          # R5 = 15 - 15 = 0     
+MUL R8, R5, R1          # R8 = R5(0) * R1(5) = 0 
+BEQ R5, R0, 11          # R5(0) == R0(0) --> VERDADEIRO. DESVIA. Previsao NOT TAKEN INCORRETA.
+LW R7, R10, 4           # CAMINHO ESPECULATIVO INCORRETO. Será limpo. 
+DIV R9, R8, R2          # CAMINHO ESPECULATIVO INCORRETO. Será limpo. 
+ADD R5, R5, R1          # CAMINHO ESPECULATIVO INCORRETO. Será limpo.
+LW R12, R10, 8          # CAMINHO ESPECULATIVO INCORRETO. Será limpo. 
+ADD R10, R10, R0        # CAMINHO ESPECULATIVO INCORRETO. Será limpo. 
+SUB R11, R1, R0         # Caminho do DESVIO (CORRETO)
+
+# --- Teste: Desvio Nao Tomado  ---
+ADD R3, R1, R2          # R3 = 5 + 10 = 15      
+SUB R4, R2, R1          # R4 = 10 - 5 = 5       
+ADD R3, R3, R4          # R3 = 15 + 5 = 20     
+SW R3, R10, 4           # Mem[104] = R3(20)     
+ADD R5, R1, R2          # R5 = 5 + 10 = 15      
+MUL R8, R5, R1          # R8 = R5(15) * R1(5) = 75 
+BEQ R5, R0, 11          # R5(15) != R0(0) -> NAO desvia. Previsao NOT TAKEN CORRETA. 
+LW R7, R10, 4           # R7 = Mem[104] (20)    
+DIV R9, R8, R2          # R9 = R8(75) / R2(10) = 7 
+ADD R5, R5, R4          # R5 = R5(15) + R4(5) = 20 
+ADD R10, R10, R0        # R10 = R10(100) + R0(0) = 100 
+SUB R11, R1, R0         
