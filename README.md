@@ -50,13 +50,17 @@ A estrutura do diretório deve estar organizada da seguinte forma:
 
 ## 3. Como Rodar
 
-### Passo 1 — Clonar o repositórioBash
+### Passo 1 — Clonar o repositório
+```
 git clone [https://github.com/LeonardoC0/tp02-arq3.git]
-(https://github.com/LeonardoC0/tp02-arq3.git)
+
 cd tp02-arq3
+```
 
 ### Passo 2 — Executar o simulador
+```
 python tomasulo_sim.py
+```
 Nota: A janela da interface gráfica Tkinter será aberta imediatamente após a execução do comando.
 ## 4. Como Usar a Interface
 1) Carregar um trace
