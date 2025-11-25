@@ -27,7 +27,7 @@ A interface permite carregar traces de instruções, executar o código passo a 
 
 ## 1. Requisitos
 
-* **Python 3.8+**
+* **Python 3**
 * Bibliotecas padrão (não é necessário instalar pacotes externos):
     * `tkinter` (interface gráfica)
     * `collections`
