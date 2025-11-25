@@ -34,7 +34,6 @@ A interface permite carregar traces de instruções, executar o código passo a 
     * `copy`
     * `os`
 
----
 
 ## 2. Arquivos do Projeto
 
@@ -62,6 +61,8 @@ cd tp02-arq3
 python tomasulo_sim.py
 ```
 Nota: A janela da interface gráfica Tkinter será aberta imediatamente após a execução do comando.
+
+
 ## 4. Como Usar a Interface
 1) Carregar um trace
 * Clique no botão "Carregar Trace".
@@ -80,3 +81,41 @@ BEQ R1, R2, LABEL
   * Estados dos registradores. Fu
   * Pipeline (Issue / Execute / Write / Commit)
   * Informações de predição de desvio
+
+
+## 5. Funcionamento Interno
+Pipeline do Tomasulo
+
+O pipeline segue quatro fases principais:
+
+### 1. Issue
+* Seleciona a próxima instrução do trace.
+* Procura uma Estação de Reserva livre.
+* Lê operandos já prontos (Vj, Vk) ou cria dependências via tags de ROB (Qj, Qk).
+
+### 2. Execute
+* Quando operandos estão prontos, a instrução é enviada para a unidade funcional.
+* Cada tipo de operação possui uma latência específica (ver tabela abaixo).
+* A estação permanece ocupada durante a execução.
+
+### 3. Write Result
+* O resultado é colocado no Common Data Bus (CDB).
+* Todas as estações que dependiam dessa tag atualizam automaticamente seus operandos.
+* Mantém o pipeline fluindo sem travamentos.
+
+### 4. Commit (ROB)
+* As instruções são finalizadas em ordem, garantindo correção arquitetural.
+* Se o resultado for especulativo:
+* Predição correta → commit normal
+* Predição errada → flush no ROB + bolhas
+
+
+## 6. Latências Implementadas
+| Instrução          | Latência Execução | Ciclos mínimos até Commit |
+| ------------------ | ----------------- | ------------------------- |
+| ADD / SUB / Lógica | 1 ciclo           | 4 ciclos                  |
+| BRANCH (BEQ, BNE)  | 1 ciclo           | 4 ciclos                  |
+| LW / SW            | 2 ciclos          | 5 ciclos                  |
+| MUL                | 4 ciclos          | 7 ciclos                  |
+| DIV                | 10 ciclos         | 13 ciclos                 |
+
